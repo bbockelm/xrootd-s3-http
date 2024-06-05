@@ -201,7 +201,9 @@ std::string canonicalizeQueryString(
 	}
 
 	// We'll always have a superflous trailing ampersand.
-	canonicalQueryString.erase(canonicalQueryString.end() - 1);
+    if(canonicalQueryString.length()>0) {
+        canonicalQueryString.erase(canonicalQueryString.end() - 1);
+    }
 	return canonicalQueryString;
 }
 

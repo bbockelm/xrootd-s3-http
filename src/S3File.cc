@@ -63,6 +63,7 @@ int S3File::Open(const char *path, int Oflag, mode_t Mode, XrdOucEnv &env) {
 		return -ENOENT;
 	}
 	m_ai = *ai;
+    this->s3_object_name = object;
 
 	// This flag is not set when it's going to be a read operation
 	// so we check if the file exists in order to be able to return a 404

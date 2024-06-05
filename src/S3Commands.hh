@@ -185,4 +185,7 @@ class AmazonS3List : public AmazonRequest {
 
 	bool SendRequest(const std::string &continuationToken, size_t max_keys=1000);
 	bool Results(std::vector<S3ObjectInfo> &objInfo, std::vector<std::string> &commonPrefixes, std::string &ct, std::string &errMsg);
+private:
+    using AmazonRequest::SendRequest;
+
 };
