@@ -17,6 +17,7 @@
  ***************************************************************/
 
 #include "S3File.hh"
+#include "CurlWorker.hh"
 #include "S3Commands.hh"
 #include "S3FileSystem.hh"
 #include "logging.hh"
@@ -51,10 +52,10 @@ S3File::S3File(XrdSysError &log, S3FileSystem *oss)
 	  write_buffer(""), partNumber(1) {}
 
 int S3File::Open(const char *path, int Oflag, mode_t Mode, XrdOucEnv &env) {
-	if (Oflag && O_CREAT) {
+	if (Oflag & O_CREAT) {
 		m_log.Log(LogMask::Info, "File opened for creation: ", path);
 	}
-	if (Oflag && O_APPEND) {
+	if (Oflag & O_APPEND) {
 		m_log.Log(LogMask::Info, "File opened for append: ", path);
 	}
 
@@ -299,7 +300,7 @@ XrdOss *XrdOssGetStorageSystem2(XrdOss *native_oss, XrdSysLogger *Logger,
 	envP->Export("XRDXROOTD_NOPOSC", "1");
 
 	try {
-		AmazonRequest::init();
+		AmazonRequest::Init(log);
 		g_s3_oss = new S3FileSystem(Logger, config_fn, envP);
 		return g_s3_oss;
 	} catch (std::runtime_error &re) {

@@ -293,7 +293,7 @@ XrdOss *XrdOssGetStorageSystem2(XrdOss *native_oss, XrdSysLogger *Logger,
 	envP->Export("XRDXROOTD_NOPOSC", "1");
 
 	try {
-		HTTPRequest::init();
+		HTTPRequest::Init(log);
 		g_http_oss = new HTTPFileSystem(Logger, config_fn, envP);
 		return g_http_oss;
 	} catch (std::runtime_error &re) {
