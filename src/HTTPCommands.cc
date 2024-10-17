@@ -259,6 +259,8 @@ bool HTTPRequest::SetupHandle(CURL *curl) {
 		return false;
 	}
 
+	curl_easy_reset(curl);
+
 	auto rv = curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, m_errorBuffer);
 	if (rv != CURLE_OK) {
 		this->errorCode = "E_CURL_LIB";
