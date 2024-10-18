@@ -168,26 +168,46 @@ int debugCallback(CURL *handle, curl_infotype ci, char *data, size_t size,
 
 	case CURLINFO_HEADER_OUT:
 		text = "=> Send header";
-		dump_plain(text, stderr, (unsigned char *)data, size);
-		break;
-	case CURLINFO_DATA_OUT:
-		text = "=> Send data";
-		break;
-	case CURLINFO_SSL_DATA_OUT:
-		text = "=> Send SSL data";
-		break;
-	case CURLINFO_HEADER_IN:
-		text = "<= Recv header";
-		break;
-	case CURLINFO_DATA_IN:
-		text = "<= Recv data";
-		break;
-	case CURLINFO_SSL_DATA_IN:
-		text = "<= Recv SSL data";
+		dump_plain(text, stderr, (unsigned char *) data, size);
 		break;
 	}
-	dump(text, stderr, (unsigned char *)data, size);
+	return 0;
+}
 
+int debugAndDumpCallback(CURL *handle, curl_infotype ci, char *data, size_t size,
+						 void *clientp) {
+	const char *text;
+	(void)handle; /* prevent compiler warning */
+	(void)clientp;
+
+	switch (ci) {
+		case CURLINFO_TEXT:
+			fputs("== Info: ", stderr);
+			fwrite(data, size, 1, stderr);
+		default: /* in case a new one is introduced to shock us */
+			return 0;
+
+		case CURLINFO_HEADER_OUT:
+			text = "=> Send header";
+			dump_plain(text, stderr, (unsigned char *)data, size);
+			break;
+		case CURLINFO_DATA_OUT:
+			text = "=> Send data";
+			break;
+		case CURLINFO_SSL_DATA_OUT:
+			text = "=> Send SSL data";
+			break;
+		case CURLINFO_HEADER_IN:
+			text = "<= Recv header";
+			break;
+		case CURLINFO_DATA_IN:
+			text = "<= Recv data";
+			break;
+		case CURLINFO_SSL_DATA_IN:
+			text = "<= Recv SSL data";
+			break;
+	}
+	dump(text, stderr, (unsigned char *)data, size);
 	return 0;
 }
 
@@ -438,8 +458,12 @@ bool HTTPRequest::SetupHandle(CURL *curl) {
 		this->errorMessage = "curl_easy_setopt( CURLOPT_HTTPHEADER ) failed.";
 		return false;
 	}
-	if (m_log.getMsgMask() & LogMask::Dump) {
+	if (m_log.getMsgMask() & LogMask::Debug) {
 		rv = curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, debugCallback);
+		rv = curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+	}
+	if (m_log.getMsgMask() & LogMask::Dump) {
+		rv = curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, debugAndDumpCallback);
 		rv = curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
 	}
 
