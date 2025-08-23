@@ -25,11 +25,9 @@
 #include <XrdSfs/XrdSfsInterface.hh>
 #include <map>
 
-using namespace XrdHTTPServer;
-
 class HTTPDirectory : public XrdOssDF {
   public:
-	HTTPDirectory(XrdSysError &log, HTTPFileSystem *oss);
+	HTTPDirectory(XrdSysError &log, HTTPFileSystem &oss);
 	virtual ~HTTPDirectory() {}
 
 	virtual int Opendir(const char *path, XrdOucEnv &env) override;
@@ -43,8 +41,8 @@ class HTTPDirectory : public XrdOssDF {
 
 	virtual int Close(long long *retsz = 0) override { return -ENOSYS; }
 
-  protected:
-	struct FSSpecEntry {
+  private:
+	struct Entry {
 		std::string mode;
 		std::string flags;
 		std::string size;
@@ -52,17 +50,11 @@ class HTTPDirectory : public XrdOssDF {
 		std::string name;
 	};
 
-	std::map<std::string, struct stat>
-	parseHTMLToFSSpecString(const std::string &htmlContent);
+	void parseHTMLToListing(const std::string &htmlContent);
 	std::string extractHTMLTable(const std::string &htmlContent);
 
 	struct stat *mystat;
 	XrdSysError &m_log;
-	std::string m_object;
-	HTTPFileSystem *m_oss;
-	std::string m_hostname;
-	std::string m_hostUrl;
-	std::map<std::string, struct stat> m_remoteList;
-	std::string m_remote_flavor;
-	int m_bytesReturned;
+	HTTPFileSystem &m_oss;
+	std::vector<std::pair<std::string, struct stat>> m_remoteList;
 };
