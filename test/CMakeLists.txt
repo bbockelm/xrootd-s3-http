@@ -60,6 +60,8 @@ add_executable( http-gtest http_tests.cc )
 add_executable( filter-gtest filter_tests.cc ../src/shortfile.cc )
 add_executable( posc-gtest posc_tests.cc ../src/shortfile.cc )
 add_executable( n2n-prefix-gtest n2n_prefix_tests.cc ../src/shortfile.cc )
+add_executable( ofsredirect-gtest ofsredirect_tests.cc ../src/shortfile.cc )
+add_executable( pfcs3-gtest pfcs3_tests.cc ../src/shortfile.cc )
 
 target_link_libraries(s3-gtest XrdS3Testing GTest::gtest_main Threads::Threads)
 target_link_libraries(s3-unit-test XrdS3Testing GTest::gtest_main Threads::Threads)
@@ -67,6 +69,8 @@ target_link_libraries(http-gtest XrdHTTPServerTesting GTest::gtest_main Threads:
 target_link_libraries(filter-gtest XrdOssFilterTesting GTest::gtest_main Threads::Threads)
 target_link_libraries(posc-gtest XrdOssPoscTesting GTest::gtest_main Threads::Threads)
 target_link_libraries(n2n-prefix-gtest XrdN2NPrefixTesting GTest::gtest_main Threads::Threads)
+target_link_libraries(ofsredirect-gtest XrdOfsRedirectTesting GTest::gtest_main Threads::Threads)
+target_link_libraries(pfcs3-gtest XrdOssPfcS3Testing GTest::gtest_main Threads::Threads)
 
 gtest_add_tests(TARGET filter-gtest TEST_LIST filterUnitTests)
 
@@ -78,6 +82,20 @@ set_tests_properties(${filterUnitTests}
 gtest_add_tests(TARGET n2n-prefix-gtest TEST_LIST n2nPrefixUnitTests)
 
 set_tests_properties(${n2nPrefixUnitTests}
+  PROPERTIES
+    ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan-suppressions.txt"
+)
+
+gtest_add_tests(TARGET ofsredirect-gtest TEST_LIST ofsRedirectUnitTests)
+
+set_tests_properties(${ofsRedirectUnitTests}
+  PROPERTIES
+    ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan-suppressions.txt"
+)
+
+gtest_add_tests(TARGET pfcs3-gtest TEST_LIST pfcS3UnitTests)
+
+set_tests_properties(${pfcS3UnitTests}
   PROPERTIES
     ENVIRONMENT "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan-suppressions.txt"
 )
@@ -198,6 +216,59 @@ set_tests_properties(N2N::basic::test
     ENVIRONMENT "BINARY_DIR=${CMAKE_BINARY_DIR}"
     ATTACHED_FILES_ON_FAIL "${N2N_BASIC_TEST_LOGS}"
 )
+
+######################################
+# OFS Redirect Integration Tests
+######################################
+if (MINIO_BIN AND MC_BIN)
+  # Generate s3-plugin.conf for XrdClS3 if available
+  if (XRDCLS3_FOUND)
+    # Create the client plugins directory
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/etc/xrootd/client.plugins.d")
+    # Generate the s3-plugin.conf file at build time using a generator expression
+    file(GENERATE
+      OUTPUT "${CMAKE_BINARY_DIR}/etc/xrootd/client.plugins.d/s3-plugin.conf"
+      CONTENT "url = s3://*\nlib = ${XRDCLS3_LIBRARY}\nenable = true\n"
+    )
+    set(XRDCLS3_PLUGIN_CONF "${CMAKE_BINARY_DIR}/etc/xrootd/client.plugins.d")
+    message(STATUS "XrdClS3 plugin config will be generated at ${XRDCLS3_PLUGIN_CONF}/s3-plugin.conf")
+  else()
+    set(XRDCLS3_PLUGIN_CONF "")
+    message(WARNING "XrdClS3 not available; OfsRedirect S3 existence checks may not work")
+  endif()
+
+  add_test(NAME OfsRedirect::basic::setup
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/ofsredirect-setup.sh" ofsredirect_basic)
+
+  set_tests_properties(OfsRedirect::basic::setup
+    PROPERTIES
+      FIXTURES_SETUP OfsRedirect::basic
+      ENVIRONMENT "BINARY_DIR=${CMAKE_BINARY_DIR};SOURCE_DIR=${CMAKE_SOURCE_DIR};XROOTD_BINDIR=${XRootD_DATA_DIR}/../bin;XROOTD_LIBDIR=${XRootD_LIB_DIR};LD_LIBRARY_PATH=${XRootD_LIB_DIR}:${CMAKE_BINARY_DIR}/lib;MINIO_BIN=${MINIO_BIN};MC_BIN=${MC_BIN};XRDCLS3_PLUGIN_CONF=${XRDCLS3_PLUGIN_CONF}"
+  )
+
+  add_test(NAME OfsRedirect::basic::teardown
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/ofsredirect-teardown.sh" ofsredirect_basic)
+
+  set_tests_properties(OfsRedirect::basic::teardown
+    PROPERTIES
+      FIXTURES_CLEANUP OfsRedirect::basic
+      ENVIRONMENT "BINARY_DIR=${CMAKE_BINARY_DIR}"
+  )
+
+  add_test(NAME OfsRedirect::basic::test
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/ofsredirect-test.sh" ofsredirect_basic)
+
+  list(APPEND OFSREDIRECT_BASIC_TEST_LOGS ${CMAKE_BINARY_DIR}/tests/ofsredirect_basic/server.log)
+  list(APPEND OFSREDIRECT_BASIC_TEST_LOGS ${CMAKE_BINARY_DIR}/tests/ofsredirect_basic/xrootd.log)
+  list(APPEND OFSREDIRECT_BASIC_TEST_LOGS ${CMAKE_BINARY_DIR}/tests/ofsredirect_basic/client.log)
+
+  set_tests_properties(OfsRedirect::basic::test
+    PROPERTIES
+      FIXTURES_REQUIRED OfsRedirect::basic
+      ENVIRONMENT "BINARY_DIR=${CMAKE_BINARY_DIR}"
+      ATTACHED_FILES_ON_FAIL "${OFSREDIRECT_BASIC_TEST_LOGS}"
+  )
+endif()
 
 ####
 #   Start of S3 tests, which require minio and mc

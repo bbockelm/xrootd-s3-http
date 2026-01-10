@@ -36,7 +36,7 @@ jobs:
       working-directory: ${{runner.workspace}}
       run: |
         # Build deps
-        sudo apt update && sudo apt-get install -y cmake libz-dev uuid-dev libcurl4-openssl-dev libcurl4 pkg-config libssl-dev g++ libscitokens-dev libgtest-dev
+        sudo apt update && sudo apt-get install -y cmake libz-dev uuid-dev libcurl4-openssl-dev libcurl4 pkg-config libssl-dev g++ libscitokens-dev libgtest-dev libsqlite3-dev
 
         # Build our preferred set of patches on xrootd
         git clone https://github.com/xrootd/xrootd.git
@@ -47,6 +47,17 @@ jobs:
         mkdir -p build/release_dir
         cd build
         cmake .. -DCMAKE_INSTALL_PREFIX=$PWD/release_dir -DENABLE_ASAN=TRUE
+        make -j $(($(nproc) + 2)) install
+
+    - name: Build xrdcl-pelican
+      working-directory: ${{runner.workspace}}
+      run: |
+        # Build xrdcl-pelican for the XrdClS3 plugin
+        git clone https://github.com/PelicanPlatform/xrdcl-pelican.git
+        cd xrdcl-pelican
+        mkdir -p build
+        cd build
+        CMAKE_PREFIX_PATH=${{runner.workspace}}/xrootd/build/release_dir/lib/cmake/XRootD cmake .. -DCMAKE_INSTALL_PREFIX=${{runner.workspace}}/xrootd/build/release_dir -DENABLE_ASAN=TRUE
         make -j $(($(nproc) + 2)) install
 
     - name: Create Build Environment

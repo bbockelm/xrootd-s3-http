@@ -11,7 +11,7 @@ if( "${CMAKE_BUILD_TYPE}" STREQUAL "" )
   set( CMAKE_BUILD_TYPE Debug )
 endif()
 
-find_package( XRootD REQUIRED COMPONENTS UTILS SERVER )
+find_package( XRootD REQUIRED COMPONENTS UTILS SERVER CLIENT )
 find_package( CURL REQUIRED )
 find_package( Threads REQUIRED )
 find_package( OpenSSL REQUIRED )
@@ -80,6 +80,72 @@ if( NOT XROOTD_EXTERNAL_TINYXML2 )
   FetchContent_MakeAvailable( tinyxml2 )
 else()
   find_package( tinyxml2 REQUIRED )
+endif()
+
+# xrdcl-pelican provides XrdClS3 plugin for S3 client operations
+# First try to find an installed version, otherwise fetch and build it for testing
+option( XRDCL_PELICAN_EXTERNAL "Use an external/pre-installed copy of xrdcl-pelican" OFF )
+if( XRDCL_PELICAN_EXTERNAL )
+  # Look for installed XrdClS3 library
+  find_library( XRDCLS3_LIBRARY NAMES XrdClS3 XrdClS3-5
+    HINTS ${XRootD_LIB_DIR} /opt/xrootd/lib /usr/lib64 /usr/lib
+    PATH_SUFFIXES xrootd
+  )
+  if( XRDCLS3_LIBRARY )
+    message( STATUS "Found XrdClS3: ${XRDCLS3_LIBRARY}" )
+    set( XRDCLS3_FOUND TRUE )
+  else()
+    message( WARNING "XrdClS3 library not found; S3 client operations in tests may not work" )
+    set( XRDCLS3_FOUND FALSE )
+  endif()
+elseif( ENABLE_TESTS )
+  # Fetch and build xrdcl-pelican for testing
+  include( FetchContent )
+  find_package( SQLite3 QUIET )
+  if( NOT SQLite3_FOUND )
+    message( WARNING "SQLite3 not found; skipping xrdcl-pelican build" )
+    set( XRDCLS3_FOUND FALSE )
+  else()
+    set( XRDCL_PELICAN_URL "${CMAKE_CURRENT_SOURCE_DIR}/xrdcl-pelican.tar.gz" )
+    if( NOT EXISTS "${XRDCL_PELICAN_URL}" )
+      set( XRDCL_PELICAN_URL "https://github.com/PelicanPlatform/xrdcl-pelican/archive/refs/heads/main.tar.gz" )
+    endif()
+    cmake_policy( SET CMP0135 NEW )
+    FetchContent_Declare(
+      xrdcl_pelican
+      URL "${XRDCL_PELICAN_URL}"
+    )
+    # Tell xrdcl-pelican to use our nlohmann_json (we've already fetched/found it above)
+    set( XROOTD_EXTERNAL_JSON ON CACHE BOOL "Use external nlohmann_json" FORCE )
+    # The nlohmann_json::nlohmann_json target is already defined by FetchContent above.
+    # We need to create a config file that works on reconfigure when the target may not
+    # exist yet. The stub will define the target if needed.
+    file( WRITE "${CMAKE_BINARY_DIR}/_deps/nlohmann_json-build/nlohmann_jsonTargets.cmake"
+"# Stub targets file for nlohmann_json when used via FetchContent
+# The actual target is defined by FetchContent_MakeAvailable above.
+# This file is needed because nlohmann_jsonConfig.cmake tries to include it.
+if(NOT TARGET nlohmann_json::nlohmann_json)
+  # Define the interface library target pointing to the FetchContent source
+  add_library(nlohmann_json INTERFACE IMPORTED)
+  set_target_properties(nlohmann_json PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES \"${CMAKE_BINARY_DIR}/_deps/nlohmann_json-src/include\"
+  )
+  add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json)
+endif()
+" )
+    set( nlohmann_json_DIR "${CMAKE_BINARY_DIR}/_deps/nlohmann_json-build" CACHE PATH "nlohmann_json cmake config location" FORCE )
+    # Don't build xrdcl-pelican tests
+    set( ENABLE_TESTS_SAVED ${ENABLE_TESTS} )
+    set( ENABLE_TESTS OFF )
+    FetchContent_MakeAvailable( xrdcl_pelican )
+    set( ENABLE_TESTS ${ENABLE_TESTS_SAVED} )
+    set( XRDCLS3_FOUND TRUE )
+    # Get the path to the built XrdClS3 library
+    set( XRDCLS3_LIBRARY "$<TARGET_FILE:XrdClS3>" )
+    message( STATUS "XrdClS3 will be built from xrdcl-pelican" )
+  endif()
+else()
+  set( XRDCLS3_FOUND FALSE )
 endif()
 
 ##
@@ -157,6 +223,21 @@ add_library( XrdOssPosc MODULE "$<TARGET_OBJECTS:XrdOssPoscObj>" )
 target_link_libraries( XrdOssPosc XrdOssPoscObj )
 
 #######################
+## libXrdOssPfcS3    ##
+#######################
+add_library( XrdOssPfcS3Obj OBJECT
+  src/PfcS3.cc
+  src/CinfoReader.cc
+  src/logging.cc
+)
+set_target_properties( XrdOssPfcS3Obj PROPERTIES POSITION_INDEPENDENT_CODE ON )
+target_include_directories( XrdOssPfcS3Obj PRIVATE ${XRootD_INCLUDE_DIRS} )
+target_link_libraries( XrdOssPfcS3Obj ${XRootD_UTILS_LIBRARIES} ${XRootD_SERVER_LIBRARIES} ${XRootD_CLIENT_LIBRARIES} Threads::Threads std::atomic )
+
+add_library( XrdOssPfcS3 MODULE "$<TARGET_OBJECTS:XrdOssPfcS3Obj>" )
+target_link_libraries( XrdOssPfcS3 XrdOssPfcS3Obj )
+
+#######################
 ## libXrdN2NPrefix   ##
 #######################
 add_library( XrdN2NPrefixObj OBJECT src/PrefixN2N.cc )
@@ -167,6 +248,32 @@ target_link_libraries( XrdN2NPrefixObj ${XRootD_UTILS_LIBRARIES} ${XRootD_SERVER
 add_library( XrdN2NPrefix MODULE "$<TARGET_OBJECTS:XrdN2NPrefixObj>" )
 target_link_libraries( XrdN2NPrefix XrdN2NPrefixObj )
 
+#######################
+## libXrdOfsRedirect ##
+#######################
+add_library( XrdOfsRedirectObj OBJECT
+  src/XrdOfsRedirect.cc
+  src/S3PresignedUrl.cc
+  src/S3Commands.cc
+  src/S3File.cc
+  src/S3Directory.cc
+  src/S3FileSystem.cc
+  src/HTTPCommands.cc
+  src/S3AccessInfo.cc
+  src/AWSv4-impl.cc
+  src/CurlUtil.cc
+  src/TokenFile.cc
+  src/stl_string_utils.cc
+  src/shortfile.cc
+  src/logging.cc
+)
+set_target_properties( XrdOfsRedirectObj PROPERTIES POSITION_INDEPENDENT_CODE ON )
+target_include_directories( XrdOfsRedirectObj PRIVATE ${XRootD_INCLUDE_DIRS} )
+target_link_libraries( XrdOfsRedirectObj ${XRootD_UTILS_LIBRARIES} ${XRootD_SERVER_LIBRARIES} ${XRootD_CLIENT_LIBRARIES} CURL::libcurl OpenSSL::Crypto tinyxml2::tinyxml2 Threads::Threads std::filesystem std::atomic )
+
+add_library( XrdOfsRedirect MODULE "$<TARGET_OBJECTS:XrdOfsRedirectObj>" )
+target_link_libraries( XrdOfsRedirect XrdOfsRedirectObj )
+
 # Customize module's suffix and, on Linux, hide unnecessary symbols
 if( APPLE )
   set_target_properties( XrdS3 PROPERTIES OUTPUT_NAME "XrdS3-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" )
@@ -176,7 +283,9 @@ if( APPLE )
   set_target_properties( XrdOssFilter PROPERTIES OUTPUT_NAME "XrdOssFilter-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" )
   set_target_properties( XrdOssGlobus PROPERTIES OUTPUT_NAME "XrdOssGlobus-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" )
   set_target_properties( XrdOssPosc PROPERTIES OUTPUT_NAME "XrdOssPosc-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" )
+  set_target_properties( XrdOssPfcS3 PROPERTIES OUTPUT_NAME "XrdOssPfcS3-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" )
   set_target_properties( XrdN2NPrefix PROPERTIES OUTPUT_NAME "XrdN2NPrefix-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" )
+  set_target_properties( XrdOfsRedirect PROPERTIES OUTPUT_NAME "XrdOfsRedirect-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" )
 else()
   set_target_properties( XrdS3 PROPERTIES OUTPUT_NAME "XrdS3-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" LINK_FLAGS "-Wl,--version-script=${CMAKE_SOURCE_DIR}/configs/export-lib-symbols" )
   set_target_properties( XrdHTTPServer PROPERTIES OUTPUT_NAME "XrdHTTPServer-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" LINK_FLAGS "-Wl,--version-script=${CMAKE_SOURCE_DIR}/configs/export-lib-symbols" )
@@ -185,14 +294,15 @@ else()
   set_target_properties( XrdOssFilter PROPERTIES OUTPUT_NAME "XrdOssFilter-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" LINK_FLAGS "-Wl,--version-script=${CMAKE_SOURCE_DIR}/configs/export-lib-symbols" )
   set_target_properties( XrdOssGlobus PROPERTIES OUTPUT_NAME "XrdOssGlobus-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" LINK_FLAGS "-Wl,--version-script=${CMAKE_SOURCE_DIR}/configs/export-lib-symbols" )
   set_target_properties( XrdOssPosc PROPERTIES OUTPUT_NAME "XrdOssPosc-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" LINK_FLAGS "-Wl,--version-script=${CMAKE_SOURCE_DIR}/configs/export-lib-symbols" )
+  set_target_properties( XrdOssPfcS3 PROPERTIES OUTPUT_NAME "XrdOssPfcS3-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" LINK_FLAGS "-Wl,--version-script=${CMAKE_SOURCE_DIR}/configs/export-lib-symbols" )
   set_target_properties( XrdN2NPrefix PROPERTIES OUTPUT_NAME "XrdN2NPrefix-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" LINK_FLAGS "-Wl,--version-script=${CMAKE_SOURCE_DIR}/configs/export-lib-symbols" )
-  #set_target_properties( XrdOfsRedirect PROPERTIES OUTPUT_NAME "XrdOfsRedirect-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" LINK_FLAGS "-Wl,--version-script=${CMAKE_SOURCE_DIR}/configs/export-ofs-lib-symbols" )
+  set_target_properties( XrdOfsRedirect PROPERTIES OUTPUT_NAME "XrdOfsRedirect-${XRootD_PLUGIN_VERSION}" SUFFIX ".so" LINK_FLAGS "-Wl,--version-script=${CMAKE_SOURCE_DIR}/configs/export-ofs-lib-symbols" )
 endif()
 
 include(GNUInstallDirs)
 
 install(
-  TARGETS XrdS3 XrdHTTPServer XrdOssS3 XrdOssHttp XrdOssFilter XrdOssGlobus XrdOssPosc XrdN2NPrefix
+  TARGETS XrdS3 XrdHTTPServer XrdOssS3 XrdOssHttp XrdOssFilter XrdOssGlobus XrdOssPosc XrdOssPfcS3 XrdN2NPrefix XrdOfsRedirect
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
@@ -221,6 +331,14 @@ if( ENABLE_TESTS )
   add_library( XrdN2NPrefixTesting SHARED "$<TARGET_OBJECTS:XrdN2NPrefixObj>" )
   target_link_libraries( XrdN2NPrefixTesting XrdN2NPrefixObj )
   target_include_directories( XrdN2NPrefixTesting INTERFACE ${XRootD_INCLUDE_DIRS} )
+
+  add_library( XrdOfsRedirectTesting SHARED "$<TARGET_OBJECTS:XrdOfsRedirectObj>" )
+  target_link_libraries( XrdOfsRedirectTesting XrdOfsRedirectObj )
+  target_include_directories( XrdOfsRedirectTesting INTERFACE ${XRootD_INCLUDE_DIRS} )
+
+  add_library( XrdOssPfcS3Testing SHARED "$<TARGET_OBJECTS:XrdOssPfcS3Obj>" )
+  target_link_libraries( XrdOssPfcS3Testing XrdOssPfcS3Obj )
+  target_include_directories( XrdOssPfcS3Testing INTERFACE ${XRootD_INCLUDE_DIRS} )
 
   find_program(GoWrk go-wrk HINTS "$ENV{HOME}/go/bin")
   if( NOT GoWrk )
